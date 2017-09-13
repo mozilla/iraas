@@ -1,0 +1,94 @@
+service: iraas
+plugins:
+  - serverless-python-requirements
+  - serverless-sqs-fifo
+custom:
+  pythonRequirements:
+    # dockerizePip: true
+    # dockerImage: mozillaiam/docker-sls:latest
+    cleanupZipHelper: true
+  sqs:
+    queues:
+      deadLetterQueue:
+        QueueName: ${self:service}-DeadLetterQueue.fifo
+        Properties:
+          ContentBasedDeduplication: True
+          FifoQueue: True
+          DelaySeconds: 0
+          MaximumMessageSize: 262144
+          MessageRetentionPeriod: 1209600
+          ReceiveMessageWaitTimeSeconds: 20
+          VisibilityTimeout: 3600
+      InputQueue:
+        QueueName: ${self:service}-AlertsInQueue.fifo
+        Properties:
+          ContentBasedDeduplication: True
+          FifoQueue: True
+          DelaySeconds: 0
+          MaximumMessageSize: 262144
+          MessageRetentionPeriod: 1209600
+          ReceiveMessageWaitTimeSeconds: 20
+          VisibilityTimeout: 3600
+      OutputQueue:
+        QueueName: ${self:service}-AlertsOutQueue.fifo
+        Properties:
+          ContentBasedDeduplication: True
+          FifoQueue: True
+          DelaySeconds: 0
+          MaximumMessageSize: 262144
+          MessageRetentionPeriod: 1209600
+          ReceiveMessageWaitTimeSeconds: 20
+          VisibilityTimeout: 3600
+provider:
+  name: aws
+  runtime: python3.6
+  stage: ${env:STAGE}
+  iamRoleStatements:
+    -  Effect: "Allow"
+       Action:
+         - "s3:ListBucket"
+         - "s3:GetBucketLocation"
+       Resource:
+           - "arn:aws:s3:::infosec-internal-data"
+    -  Effect: "Allow"
+       Action:
+         - "s3:GetObject"
+       Resource:
+         - "arn:aws:s3:::infosec-internal-data/*"
+    -
+      Effect: "Allow"
+      Action:
+        - "sqs:ChangeMessageVisibility"
+        - "sqs:ChangeMessageVisibilityBatch"
+        - "sqs:DeleteMessage"
+        - "sqs:DeleteMessageBatch"
+        - "sqs:GetQueueAttributes"
+        - "sqs:GetQueueUrl"
+        - "sqs:ReceiveMessage"
+        - "sqs:SendMessage"
+        - "sqs:SendMessageBatch"
+      Resource:
+        - custom.sqs.queues.deadLetterQueue.arn
+        - custom.sqs.queues.OutputQueue.arn
+        - custom.sqs.queues.InputQueue.arn
+    -
+      Effect: "Allow"
+      Action:
+        - "sts:AssumeRole"
+      Resource:
+        - "*"
+functions:
+  credential-processor:
+    handler: credential.handler
+    environment:
+      s3_bucket: 'infosec-internal-data'
+      key: 'iam-roles/roles.json'
+  response-processor:
+    handler: response.handler
+  alert-processor:
+    handler: alert.handler
+    environment:
+      input_queue: custom.sqs.queues.InputQueue.arn
+      output_queue: custom.sqs.queues.OutputQueue.arn
+    events:
+      - schedule: rate(1 minute)
